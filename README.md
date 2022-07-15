@@ -10,10 +10,10 @@ List all of the members who developed the project and
 link to each members respective GitHub profile
 -->
 Developed by: 
-- [member1](https://github.com/cbaker6) - `STUDENTS_UNIVERSITY`
-- [member2](https://github.com/cbaker6) - `STUDENTS_UNIVERSITY` 
-- [member3](https://github.com/cbaker6) - `STUDENTS_UNIVERSITY` 
-- [member4](https://github.com/cbaker6) - `STUDENTS_UNIVERSITY`
+- [Santiago Dorado](https://github.com/dorasanti) - `UNIVERSITY OF ARKANSAS`
+- [Devin Hill](https://github.com/Vuxify) - `UNIVERSITY OF ARKANSAS` 
+- [Ayia Ismael](https://github.com/daholypandah) - `VIRGINIA TECH` 
+- [Adrian Whitty](https://github.com/adrianwhitty2022) - `UNIVERSITY OF ARKANSAS-PINE BLUFF`
 
 ## Description
 <!--

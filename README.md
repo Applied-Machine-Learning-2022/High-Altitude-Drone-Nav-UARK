@@ -15,10 +15,24 @@ Developed by:
 - [Ayia Ismael](https://github.com/daholypandah) - `VIRGINIA TECH` 
 - [Adrian Whitty](https://github.com/adrianwhitty2022) - `UNIVERSITY OF ARKANSAS-PINE BLUFF`
 
-## Description
-<!--
-Give a short description on what your project accomplishes and what tools is uses. In addition, you can drop screenshots directly into your README file to add them to your README. Take these from your presentations.
--->
+## Objective
+The objective of this project is to use machine learning models to predict the location of a aerial drone. These models rely on the real-time high-altitude to maintain geolocation of the drone.
+## Goal
+Long term
+    - To use Convolutional Neural Networks in application to Absolution Visual Geolocation to prevent the possible drawbacks and lack of secure navigation when navigating by GNSS. In the long run, taking this model and its subsequent algorithmic modeling and applying it to sections outside of the Washington County area that the current images used for testing and training are based on. 
+Short term
+    - Optimize the models for better accuarcy uses 12 training set and 1 testing set for Washington County.
+
+## Describe the dataset, data acquisition, and data preparation
+- Dataset: 
+    -
+- Data Acquisition:
+    -
+- Data Preparation:
+
+## Models
+
+## Results
 
 ## Usage instructions
 <!--

@@ -32,6 +32,13 @@ Short term
 
 ## Models
  For this project, we decided to use Xception and Vision Transformer models. The models that we used were developed and constructed previously by Dr. Rainwater and Winthrop Harvey. Our main objective was to improve the performance of these models. 
+ ViT
+ The Vision transformer is based on the structure of a transformer designed for text-based tasks. 
+ ![Picture1](https://user-images.githubusercontent.com/106926413/181702423-74f5c63d-6548-43e1-9e42-90a9a4d9bf75.png)
+ Xception
+ Xception is a convolutional neural network. The pretrain Xception network can classify 1000 object categories, but in our class we are using Xception to categorize location of images.
+
+ ![Picture2](https://user-images.githubusercontent.com/106926413/181702662-bf04c9ea-745d-40cb-8d95-4e692f2a5fa5.jpg)
  
 ## Results
 Based on our model’s performance, we have deemed that the model that utilizes Vision Transformers was the best performing model. This was due to the optimal RMSE score and loss score being less than that of the model using Xception. Although Xception did have slightly higher accuracy, vision transformers are optimal for large datasets that include millions of images. Since we only had a dataset of 24,000 images, the accuracy, and performance of the model using vision transformers underperformed due to the lack of data. This however is not a real issue since our dataset was only collected from an area of thirty kilometers squared. 

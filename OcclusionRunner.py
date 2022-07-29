@@ -1,5 +1,5 @@
 import tensorflow as tf
-import tensorflow.python.keras as tfk
+import tensorflow.keras as tfk
 import numpy as np
 import pandas as pd
 import math
@@ -17,6 +17,12 @@ from sklearn.preprocessing import MinMaxScaler
 from tensorflow.python.keras.applications.xception import Xception
 from tensorflow.python.keras.callbacks import TerminateOnNaN
 from pathlib import Path
+import cv2
+import itertools
+import tensorflow_addons as tfa
+from cutout_ops import random_cutout
+
+
 
 #Previously when I had very big images this was needed to prevent a crash, no longer necessary but doesn't hurt
 Image.MAX_IMAGE_PIXELS = 1000000000
@@ -47,10 +53,15 @@ l2_reg = float(args[4])
 #Training run length
 epochs = int(args[5])
 
-#train sets
-trainsets = str(args[6])
+max_clouds = int(args[6])
 
-trainsets = str.split(trainsets)
+max_angle = float(args[7])
+
+min_half_axis = int(args[8])
+
+max_half_axis = int(args[9])
+
+
 
 
 
@@ -61,10 +72,12 @@ p.mkdir(parents=True, exist_ok=True)
 
 #This indicates that the data should be found one directory prior to the directory the file is run from
 #Simply change to the correct directory if not
-traindatapath = str(workingpath / '..' )
-testdatapath = str(workingpath / '..' )
+traindatapath = "/Users/devinhill/Documents/Capstone_Drone_Geo/ImageOnly/" #str(workingpath / '..' )
+testdatapath = "/Users/devinhill/Documents/Capstone_Drone_Geo/ImageOnly/" #str(workingpath / '..' )
 #Location of the labels file: the file should be a csv with  filename, x, and y columns
-alldata = pd.read_csv('../multiplesourcelabels.csv')
+# alldata = pd.read_csv('../multiplesourcelabels.csv')
+alldata = pd.read_csv("/Users/devinhill/Documents/Capstone_Drone_Geo/Code/multiplesourcelabels.csv")
+
 
 
 
@@ -81,12 +94,6 @@ testmatch = [x.startswith(testsetstring) for x in alldata['Filename'].values]
 trainmatch = [not i for i in testmatch]
 train = alldata[trainmatch].copy()
 test = alldata[testmatch].copy()
-
-#Gets specified training sets
-trainmatch = [x.startswith(tuple(trainsets)) for x in train['Filename'].values]
-train = train[trainmatch].copy()
-
-
 # test = alldata[trainmatch].copy()
 
 #Coordinates of RoI from ArcGIS, the plus 1500 meters due to the fact that the coords are upper left corners of 3k chips (but arcgis samples as if from center)
@@ -102,18 +109,38 @@ rightRoi = 414249.787405 - 1500
 heightRoi = topRoi - bottomRoi
 widthRoi = rightRoi - leftRoi
 
+centerY = (topRoi + bottomRoi) / 2.0
+centerX = (rightRoi + leftRoi) / 2.0
 
 
 
+
+
+
+sideWidth = 1.0
+
+#Bounds for size restriction experiment, training set
+topBound = centerY + sideWidth/2.0 * heightRoi
+bottomBound = centerY - sideWidth/2.0 * heightRoi
+leftBound = centerX - sideWidth/2.0 * widthRoi
+rightBound = centerX + sideWidth/2.0 * widthRoi
+
+
+
+#Train set restrictions
+inareax = [((x > (leftBound)) and (x< (rightBound) )) for x in train['x'].values]
+train = train[inareax]
+inareay = [((x > (bottomBound)) and (x< (topBound ) )) for x in train['y'].values]
+train = train[inareay]
 
 
 #Validation padding to avoid boundary effects
 validPad = 1500
 
 #Additional area restriction for test set only
-inareax = [((x > (leftRoi + validPad)) and (x< (rightRoi - validPad) )) for x in test['x'].values]
+inareax = [((x > (leftBound + validPad)) and (x< (rightBound - validPad) )) for x in test['x'].values]
 test = test[inareax]
-inareay = [((x > (bottomRoi + validPad)) and (x< (topRoi - validPad) )) for x in test['y'].values]
+inareay = [((x > (bottomBound + validPad)) and (x< (topBound - validPad) )) for x in test['y'].values]
 test = test[inareay]
 
 #I additionally remove the ADOP2001 dataset from most runs due to it being false color infrared
@@ -249,26 +276,51 @@ def crop_generator(batches, crop_length, img_real_size, scalerx, scalery):
 #If we are making validation data, we always crop from the upper left (no adjustment of label), so there is no randomness
 #Flag is currently not used (see validation versions of these functions below) due to not fully refactoring code
 
-def random_crop_single(img, random_crop_size, img_real_size, is_valid = False):
+g1 = tf.random.Generator.from_non_deterministic_state()
+
+
+def random_crop_single(img, random_crop_size, img_real_size):
     # Note: image_data_format is 'channel_last'
     #print("IMAGE SHAPE" , img.shape)
     assert img.shape[2] == 3
     height, width = img.shape[0], img.shape[1]
 
     dy, dx = random_crop_size
-    #Choose a random point in the valid area to be the new location, then crop
-    if not is_valid:
-        x = np.random.randint(0, width - dx + 1)
-        #y = tf.experimental.numpy.random.randint(0 , height - dy + 1, dtype=np.int)
-        #tf.print("y", int(y), output_stream=sys.stderr)
-        y = np.random.randint(0, height - dy + 1)
-        #y = int(y)
 
-    else:
-        x = 0
-        y = 0
-    #Second and third return values are the x and y adjustments for labels (unscaled)
+    #x = np.random.randint(0, width - dx + 1)
+    x = g1.uniform(shape=(), minval=0, maxval=width - dx + 1, dtype=tf.int32)
+
+    #y = np.random.randint(0, height - dy + 1)
+    y = g1.uniform(shape=(), minval=0, maxval= height - dy + 1, dtype=tf.int32)
+
+
     return img[ y:(y+dy), x:(x+dx), :], (float(x) / img.shape[1]) * img_real_size, (float(y) / img.shape[0]) * img_real_size
+
+
+
+def oval_occlude(img, min_ovals=0, max_ovals=5, min_axis=20, max_axis=100):
+    num_ovals = np.random.randint(min_ovals, max_ovals)
+    startAngle = 0
+    endAngle = 360
+    color = (0, 0, 0)
+    thickness = -1
+
+
+
+    # ellipse(img, center, axes, angle, startAngle, endAngle, color[, thickness[, lineType[, shift]]]) -> img
+    for _ in itertools.repeat(None, num_ovals):
+        center = (np.random.randint(0, 224), np.random.randint(0, 224))
+        axes = (np.random.randint(min_axis, max_axis), np.random.randint(min_axis, max_axis))
+        angle = np.random.randint(0, 360)
+        img = cv2.ellipse(img, center, axes, angle, startAngle, endAngle, color, thickness)
+
+
+    return
+
+def random_jitter(img, min_angle=0, max_angle=10):
+    return
+
+
 
 
 
@@ -276,41 +328,60 @@ def random_crop_single(img, random_crop_size, img_real_size, is_valid = False):
 #Vectorizing the map (that is, making it operate on batches) will not achieve any appreciable speedup unless the random crop operation (see random_crop_single) is also vectorized
 #e.g. the randomness is on a per batch rather than an individual image level
 #But I think that is not enough randomization
-def image_crop_map(image, labels, is_valid=False):
-    image_crop, xshift, yshift = random_crop_single(image, (224,224), 3000, is_valid)
+def image_crop_map(image, labels, max_clouds, max_angle, min_half_axis, max_half_axis):
+    image_crop, xshift, yshift = random_crop_single(image, (224,224), 3000)
+
+    #tf.print(tf.shape(image_crop))
+    image_crop = tf.expand_dims(
+        image_crop, 0, name=None
+    )
 
 
-    #Combine shifts into one numpy array
-    shiftarray = np.column_stack([xshift, yshift])
-    #print(shiftarray)
-    #tf.print("shift", shiftarray, output_stream=sys.stderr)
-    #We must scale the shifts to match the scale of the labels
-    shiftarray[:, 0] *= scalexparam
-    #The scaling is inverted in y direction since north is positive in the coordinate system but going up is negative
-    shiftarray[:, 1] *= -scaleyparam
+    num_clouds = g2.uniform(shape=(), minval=0, maxval= max_clouds+1, dtype=tf.int32)
 
-    #print(shiftarray)
+    i = (tf.add(0, 0))
+    c = lambda i, image: tf.less(i, num_clouds)
+    b = lambda i, image: add_boxes(image, i, min_half_axis,max_half_axis, g2)
+    i, image_crop = tf.while_loop(c, b, (i, image_crop), )
 
+    angle = g2.uniform(shape=(), minval=-max_angle, maxval=max_angle, dtype=tf.float32)
+    image_crop = tfa.image.rotate(image_crop, [angle], interpolation='bilinear')
+
+    image_crop = tf.squeeze(image_crop)
+
+    shiftarray = tf.stack([tf.cast(xshift, tf.float32), tf.cast(yshift, tf.float32)], axis=0)
+    shiftarray = tf.reshape(shiftarray, [1, 2])
+    # shiftarray = tf.transpose(shiftarray)
+
+    #tf.print("original", shiftarray, output_stream=sys.stderr)
+    # We must scale the shifts to match the scale of the labels
+    # shiftarray[:, 0] *= scalexparam
+    # The scaling is inverted in y direction since north is positive in the coordinate system but going up is negative
+    # shiftarray[:, 1] *= -scaleyparam
+
+    shiftarray = tf.math.multiply(
+        [scalexparam, scaleyparam], shiftarray, name=None
+    )
+
+    # tf.print("scaled", shiftarray, output_stream=sys.stderr)
 
     returnlabels = tf.add(labels, shiftarray)
-    #tf.print("shift", shiftarray, "labels", labels, "returnlabels", returnlabels, output_stream=sys.stderr)
-    #returnlabels = labels
 
-    #Code you would use if the base labels were not already scaled: we save an addition operation doing the scaling earlier
+    # tf.print("summed", returnlabels, output_stream=sys.stderr)
+    # Code you would use if the base labels were not already scaled: we save an addition operation doing the scaling earlier
     # returnlabels = tf.math.multiply(returnlabels, scaler.scale_)
     # returnlabels = tf.math.add(returnlabels, scaler.min_)
 
-    #This line is absolutely essential because apparently if you don't have it, because the shape is [1,2], tensorflow probability assigns loss batch_num times per item in batch
-    #So each batch has batch^2 number of losses...
-    #I can't see this as anything other than a bug but anyway, this line avoids it
+    # TF actually automatically does the reshaping if we don't have this line, but I added it to make sure
     returnlabels = tf.reshape(returnlabels, [2, ])
+
 
     return image_crop, returnlabels
 
 #It was necessary to wrap my map code in tf.py_function which doesn't accept boolean arguments
 #I'm sure there's some combination of lambdas or chain calls we can do to continue to use our is_valid flag properly
 #But to just get things working fast, I simply copied my above functions without the random part for the validation set
-def random_crop_single_valid(img, random_crop_size, img_real_size, is_valid = False):
+def random_crop_single_valid(img, random_crop_size, img_real_size):
     # Note: image_data_format is 'channel_last'
     #print("IMAGE SHAPE" , img.shape)
     assert img.shape[2] == 3
@@ -324,11 +395,8 @@ def random_crop_single_valid(img, random_crop_size, img_real_size, is_valid = Fa
     return img[ y:(y+dy), x:(x+dx), :], (float(x) / img.shape[1]) * img_real_size, (float(y) / img.shape[0]) * img_real_size
 
 
-
-#I assume that this is a map for a SINGLE image, it does not work on batches of images
-#This is easy to change though I don't think it will speed things up
-def image_crop_map_valid(image, labels, is_valid=False):
-    image_crop, xshift, yshift = random_crop_single_valid(image, (224,224), 3000, is_valid)
+def image_crop_map_valid(image, labels):
+    image_crop, xshift, yshift = random_crop_single_valid(image, (224,224), 3000)
 
 
 
@@ -345,6 +413,48 @@ def image_crop_map_valid(image, labels, is_valid=False):
 
     #TF actually automatically does the reshaping if we don't have this line, but I added it to make sure
     returnlabels = tf.reshape(labels, [2, ])
+
+    return image_crop, returnlabels
+
+g2 = tf.random.Generator.from_non_deterministic_state()
+
+def add_boxes(img, i, min_axis, max_axis, gen):
+    first_axis = g2.uniform(shape=(), minval=min_axis , maxval= max_axis , dtype=tf.int32)
+    second_axis = g2.uniform(shape=(), minval=min_axis , maxval= max_axis , dtype=tf.int32)
+    first_axis = tf.math.multiply(first_axis, 2)
+    second_axis = tf.math.multiply(second_axis, 2)
+    img = random_cutout(img, [first_axis, second_axis], 0, gen)
+    i = (tf.add(i, 1))
+    #tf.print("Iteration", output_stream=sys.stderr)
+    return (i, img)
+
+#I assume that this is a map for a SINGLE image, it does not work on batches of images
+#This is easy to change though I don't think it will speed things up
+def image_crop_map_occlude_valid(image, labels,  max_clouds, max_angle, min_half_axis, max_half_axis):
+    image_crop, xshift, yshift = random_crop_single_valid(image, (224,224), 3000)
+
+    #tf.print(tf.shape(image_crop))
+    image_crop = tf.expand_dims(
+        image_crop, 0, name=None
+    )
+
+
+    num_clouds = g2.uniform(shape=(), minval=0, maxval= max_clouds+1, dtype=tf.int32)
+
+    i = (tf.add(0, 0))
+    c = lambda i, image: tf.less(i, num_clouds)
+    b = lambda i, image: add_boxes(image, i, min_half_axis,max_half_axis, g2)
+    i, image_crop = tf.while_loop(c, b, (i, image_crop), )
+
+    angle = g2.uniform(shape=(), minval=-max_angle, maxval=max_angle, dtype=tf.float32)
+    image_crop = tfa.image.rotate(image_crop, [angle], interpolation='bilinear')
+
+    image_crop = tf.squeeze(image_crop)
+
+
+
+    returnlabels = tf.reshape(labels, [2, ])
+
 
     return image_crop, returnlabels
 
@@ -415,7 +525,7 @@ train_ds = train_ds.cache(str(workingpath / f'{testname:s}' / "traincache"))
 train_ds = train_ds.shuffle(160, reshuffle_each_iteration=True)
 
 #Image crop, batch, and setting prefetch
-train_ds = train_ds.map(lambda x, y: tf.py_function(image_crop_map, [x,y],[tf.float32, tf.float32]), num_parallel_calls=tf.data.AUTOTUNE, deterministic=False).batch(dataset_batch).prefetch(buffer_size=AUTOTUNE)
+train_ds = train_ds.map(lambda x, y: image_crop_map(x,y, max_clouds, max_angle, min_half_axis, max_half_axis), num_parallel_calls=tf.data.AUTOTUNE, deterministic=False).batch(dataset_batch).prefetch(buffer_size=AUTOTUNE)
 
 
 # #list(dataset.as_numpy_iterator())
@@ -435,7 +545,7 @@ valid_ds = valid_ds.unbatch()
 valid_ds = valid_ds.cache(str(workingpath / f'{testname:s}' / "testcache"))
 
 #Note the is_valid=true flag in the lambda function to pass to crop function
-valid_ds = valid_ds.map(lambda x, y: tf.py_function(image_crop_map_valid, [x,y],[tf.float32, tf.float32]), num_parallel_calls=tf.data.AUTOTUNE,deterministic=False).batch(dataset_batch).prefetch(buffer_size=AUTOTUNE)
+valid_ds = valid_ds.map(image_crop_map_valid, num_parallel_calls=tf.data.AUTOTUNE,deterministic=False).batch(dataset_batch).prefetch(buffer_size=AUTOTUNE)
 
 #Xception base model, include_top = false and pooling=None means that we must manually implement final layers after convolutional layers (which we do below)
 #We do this because we want to edit them
@@ -473,6 +583,9 @@ STEP_SIZE_VALID=valid_generator.n//dataset_batch
 
 #just some name shortening
 tfd = tfp.distributions
+
+from tensorflow.python.keras import layers
+
 
 #This is a functional implementation of the final (top) layers of our xception model
 x = tfk.layers.GlobalAveragePooling2D(name='avg_pool')(xceptionmodel.output)
@@ -633,6 +746,97 @@ with open(str(workingpath.joinpath(f'{testname:s}', f'means{testname}.pkl')), 'w
 with open(str(workingpath.joinpath(f'{testname:s}', f'stddevs{testname}.pkl')), 'wb') as file_pi:
     pickle.dump(stddevs, file_pi)
 
+print("Baseline dataset")
+g2.reset_from_seed(2)
+#I don't THINK there would be an issue with states being preserved if I don't fully reinitialize all generators, but there is little reason to risk it as the code runs once
+validgen=ImageDataGenerator(rescale=1./255)
+valid_generator=validgen.flow_from_dataframe(dataframe=test, directory=testdatapath, x_col="Filename", y_col=["x","y"], class_mode="other",target_size=(448,448), batch_size=gen_batch_size, shuffle=False)
+
+valid_ds = tf.data.Dataset.from_generator(
+    lambda: valid_generator,
+    output_types=(tf.float32, tf.float32),
+    output_shapes=([None,input_size*2,input_size*2,3], [None,2])
+)
+
+
+#Repeat of above operations for validation set
+valid_ds = valid_ds.take(valid_generator.n)
+valid_ds = valid_ds.unbatch()
+#valid_ds = valid_ds.cache(str(workingpath / f'{testname:s}' / "testcache"))
+
+#Note the is_valid=true flag in the lambda function to pass to crop function
+valid_ds = valid_ds.map(lambda x, y: image_crop_map_valid(x,y  ), num_parallel_calls=tf.data.AUTOTUNE,deterministic=False).batch(dataset_batch).prefetch(buffer_size=AUTOTUNE)
+
+result = new_model.evaluate(valid_ds)
+print(dict(zip(new_model.metrics_names, result)))
+
+print("Light occlusion")
+g2.reset_from_seed(2)
+validgen=ImageDataGenerator(rescale=1./255)
+valid_generator=validgen.flow_from_dataframe(dataframe=test, directory=testdatapath, x_col="Filename", y_col=["x","y"], class_mode="other",target_size=(448,448), batch_size=gen_batch_size, shuffle=False)
+
+valid_ds = tf.data.Dataset.from_generator(
+    lambda: valid_generator,
+    output_types=(tf.float32, tf.float32),
+    output_shapes=([None,input_size*2,input_size*2,3], [None,2])
+)
+
+
+#Repeat of above operations for validation set
+valid_ds = valid_ds.take(valid_generator.n)
+valid_ds = valid_ds.unbatch()
+#valid_ds = valid_ds.cache(str(workingpath / f'{testname:s}' / "testcache"))
+
+#Note the is_valid=true flag in the lambda function to pass to crop function
+valid_ds = valid_ds.map(lambda x, y: image_crop_map_occlude_valid(x,y, 10, 0.174533, 10, 40 )).batch(dataset_batch).prefetch(buffer_size=AUTOTUNE)
+
+result = new_model.evaluate(valid_ds)
+print(dict(zip(new_model.metrics_names, result)))
+
+print("Moderate occlusion")
+g2.reset_from_seed(2)
+validgen=ImageDataGenerator(rescale=1./255)
+valid_generator=validgen.flow_from_dataframe(dataframe=test, directory=testdatapath, x_col="Filename", y_col=["x","y"], class_mode="other",target_size=(448,448), batch_size=gen_batch_size, shuffle=False)
+
+valid_ds = tf.data.Dataset.from_generator(
+    lambda: valid_generator,
+    output_types=(tf.float32, tf.float32),
+    output_shapes=([None,input_size*2,input_size*2,3], [None,2])
+)
+
+
+#Repeat of above operations for validation set
+valid_ds = valid_ds.take(valid_generator.n)
+valid_ds = valid_ds.unbatch()
+#valid_ds = valid_ds.cache(str(workingpath / f'{testname:s}' / "testcache"))
+
+#Note the is_valid=true flag in the lambda function to pass to crop function
+valid_ds = valid_ds.map(lambda x, y: image_crop_map_occlude_valid(x,y, 13, 0.174533, 20, 50 )).batch(dataset_batch).prefetch(buffer_size=AUTOTUNE)
+
+result = new_model.evaluate(valid_ds)
+print(dict(zip(new_model.metrics_names, result)))
+print("Severe occlusion")
+g2.reset_from_seed(2)
+validgen=ImageDataGenerator(rescale=1./255)
+valid_generator=validgen.flow_from_dataframe(dataframe=test, directory=testdatapath, x_col="Filename", y_col=["x","y"], class_mode="other",target_size=(448,448), batch_size=gen_batch_size, shuffle=False)
+
+valid_ds = tf.data.Dataset.from_generator(
+    lambda: valid_generator,
+    output_types=(tf.float32, tf.float32),
+    output_shapes=([None,input_size*2,input_size*2,3], [None,2])
+)
+
+
+#Repeat of above operations for validation set
+valid_ds = valid_ds.take(valid_generator.n)
+valid_ds = valid_ds.unbatch()
+#valid_ds = valid_ds.cache(str(workingpath / f'{testname:s}' / "testcache"))
+
+#Note the is_valid=true flag in the lambda function to pass to crop function
+valid_ds = valid_ds.map(lambda x, y: image_crop_map_occlude_valid(x,y, 16, 0.174533, 40, 60 )).batch(dataset_batch).prefetch(buffer_size=AUTOTUNE)
+
+result = new_model.evaluate(valid_ds)
+print(dict(zip(new_model.metrics_names, result)))
 #Obsolete method of saving predictions using generators
 # valid_generator.reset()
 # pred=model.predict_generator(valid_generator,

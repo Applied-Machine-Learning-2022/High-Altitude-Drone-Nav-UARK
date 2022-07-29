@@ -1,4 +1,3 @@
-import tensorflow
 import tensorflow as tf
 import tensorflow.keras as tfk
 import numpy as np
@@ -15,7 +14,7 @@ import tensorflow_probability as tfp
 import sys
 from pandas import Series
 from sklearn.preprocessing import MinMaxScaler
-from keras.applications.xception import Xception
+from tensorflow.python.keras.applications.xception import Xception
 from tensorflow.python.keras.callbacks import TerminateOnNaN
 from pathlib import Path
 import cv2
@@ -73,10 +72,12 @@ p.mkdir(parents=True, exist_ok=True)
 
 #This indicates that the data should be found one directory prior to the directory the file is run from
 #Simply change to the correct directory if not
-traindatapath = str(workingpath / '..' )
-testdatapath = str(workingpath / '..' )
+traindatapath = "/Users/devinhill/Documents/Capstone_Drone_Geo/ImageOnly/" #str(workingpath / '..' )
+testdatapath = "/Users/devinhill/Documents/Capstone_Drone_Geo/ImageOnly/" #str(workingpath / '..' )
 #Location of the labels file: the file should be a csv with  filename, x, and y columns
-alldata = pd.read_csv('../multiplesourcelabels.csv')
+# alldata = pd.read_csv('../multiplesourcelabels.csv')
+alldata = pd.read_csv("/Users/devinhill/Documents/Capstone_Drone_Geo/Code/multiplesourcelabels.csv")
+
 
 
 
